@@ -8,6 +8,10 @@
 
 Shared knowledge base, many customers, and retrieval that makes cross-customer leakage impossible by construction rather than by hoping the prompt behaves.
 
+![tenant-fence](assets/tenant-fence.gif)
+
+Every number in that animation comes from `python -m examples.maintenance_kb`, the offline demo in this repository.
+
 One runtime dependency (pydantic). The embedder and the generator are injected callables, so the whole suite runs offline, deterministic, with no API key and no network.
 
 The claim is scoped, and the scope is worth reading before the rest: given documents filed under the right scope, no code path in this package can put one customer's content in another customer's candidate set. Scope integrity itself is an ingestion side invariant. A chunk labelled `harrowgate` that actually holds `vantis` text passes every check here, because no access control system can tell that a document was catalogued under the wrong tenant. What the fence guarantees is that the mistake stays visible in provenance: the citation says `harrowgate`, so an audit can find it. That boundary is pinned by `test_the_guard_checks_the_declared_scope_and_not_the_text`.
