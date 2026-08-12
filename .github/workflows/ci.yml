@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Mypy
+        run: mypy
+
+      # The README pastes the demo output verbatim, and this is the step that
+      # keeps the two honest: tests/test_example_maintenance.py runs the demo
+      # and compares its output against the block in the README, so a change
+      # that moves a number fails here rather than in someone's reading of a
+      # stale write-up.
+      - name: Pytest
+        run: pytest
+
+      # Runs the demo the way a reader would, from a clean checkout of the
+      # installed package. It proves the documented command works and exits
+      # zero; it does not check the numbers, the step above does that.
+      - name: Offline demo
+        run: python -m examples.maintenance_kb
