@@ -40,6 +40,8 @@ from tenant_fence import (
     RetrievedChunk,
     Scope,
     ScopePattern,
+    TenantCollision,
+    TenantRegistry,
     describe_filter,
     is_allowed,
     normalise_id,
@@ -815,3 +817,86 @@ def test_the_guard_returns_the_whole_set_or_refuses_all_of_it() -> None:
         "response; a silent repair leaves the index handing out other tenants' material "
         "on every query with nobody noticing"
     )
+
+
+# ---------------------------------------------------------------------------
+# Write-time identity: registration collisions and the fold twins
+# ---------------------------------------------------------------------------
+
+
+def test_the_second_strasse_werke_spelling_is_refused_at_registration() -> None:
+    """Named after the review comment that asked for it.
+
+    The fold merges ASCII case pairs on purpose, so ``"Strasse-Werke"`` and
+    ``"strasse-werke"`` share one canonical key. As references, that merge is
+    correct. As registrations, it is two parties claiming one entitlement key,
+    and the registry's job is to make the second claim fail loudly at write
+    time, both spellings in the message, instead of letting the pair share an
+    entitlement and discovering it at query time as a cross-tenant read.
+    """
+    registry = TenantRegistry()
+    key = registry.register("Strasse-Werke")
+    assert key == "strasse-werke"
+    with pytest.raises(TenantCollision) as caught:
+        registry.register("strasse-werke")
+    message = str(caught.value)
+    assert "'Strasse-Werke'" in message and "'strasse-werke'" in message, (
+        f"the collision message was {message!r}; it must carry both spellings, because "
+        "a human resolving the collision can only resolve what they can see"
+    )
+
+
+def test_a_whitespace_twin_is_a_registration_collision_not_a_second_tenant() -> None:
+    registry = TenantRegistry()
+    registry.register("kronos")
+    with pytest.raises(TenantCollision):
+        registry.register(" KRONOS ")
+    assert " KRONOS " in registry, (
+        "a spelling that folds onto a minted key answered False to a membership check; "
+        "references must keep resolving to the minted tenant even though registering "
+        "that spelling is refused"
+    )
+
+
+def test_a_fold_twin_pair_forks_into_isolated_tenants_rather_than_leaking() -> None:
+    """The auto-create variant from the same review, pinned in both directions.
+
+    The ASCII-only fold deliberately keeps ``"Straße-Werke"`` and
+    ``"strasse-werke"`` apart, so they mint two distinct keys and the registry
+    accepts both. That is the fail-closed direction, and this test pins its
+    exact shape: an upstream that auto-creates tenants on first sight forks the
+    customer's content across the twins, each side healthy in isolation, and
+    neither side may ever read the other. Forked is an incident; leaked is a
+    breach. If either assertion below starts failing, the fence has traded the
+    first for the second.
+    """
+    registry = TenantRegistry()
+    sharp = registry.register("Straße-Werke")
+    plain = registry.register("strasse-werke")
+    assert sharp != plain, (
+        f"the fold merged {sharp!r} and {plain!r} into one key; two separately "
+        "registered tenants now share every entitlement written against either spelling"
+    )
+    index = build_index(
+        document(
+            "sharp-refunds",
+            "Refund window is 30 days from the invoice.",
+            Scope(customer="Straße-Werke"),
+        ),
+        document(
+            "plain-refunds",
+            "Refund window is 7 days from the invoice.",
+            Scope(customer="strasse-werke"),
+        ),
+    )
+    for granted, own_doc, twin_doc in (
+        ("Straße-Werke", "sharp-refunds", "plain-refunds"),
+        ("strasse-werke", "plain-refunds", "sharp-refunds"),
+    ):
+        returned = read(index, principal("agent", customer_grant(granted)))
+        assert returned == (own_doc,), (
+            f"a principal granted {granted!r} received {returned!r} instead of "
+            f"({own_doc!r},). Either its own material went missing, which is the fork "
+            f"failing to stay healthy in isolation, or {twin_doc!r} crossed the fence, "
+            "which is the twin leak this pair exists to rule out"
+        )

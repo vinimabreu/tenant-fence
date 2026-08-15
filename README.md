@@ -3,7 +3,7 @@
 [![ci](https://github.com/vinimabreu/tenant-fence/actions/workflows/ci.yml/badge.svg)](https://github.com/vinimabreu/tenant-fence/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-360%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-369%20passing-brightgreen)
 ![typing](https://img.shields.io/badge/typing-strict-informational)
 
 Shared knowledge base, many customers, and retrieval that makes cross-customer leakage impossible by construction rather than by hoping the prompt behaves.
@@ -391,7 +391,7 @@ Every property below is a named test whose failure message says what leaked. Run
 | Ranking is deterministic across runs | `test_ranking_is_deterministic_across_runs` |
 
 ```bash
-pytest          # 360 tests
+pytest          # 369 tests
 ruff check .
 mypy            # strict
 ```

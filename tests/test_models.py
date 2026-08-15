@@ -17,6 +17,8 @@ from tenant_fence import (
     Principal,
     Scope,
     ScopePattern,
+    TenantCollision,
+    TenantRegistry,
     normalise_id,
 )
 
@@ -366,3 +368,65 @@ def test_audit_record_is_frozen() -> None:
     )
     with pytest.raises(ValidationError):
         record.doc_ids_returned = ("tampered",)  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# TenantRegistry: minting is once per key, references keep resolving
+# ---------------------------------------------------------------------------
+
+
+def test_register_returns_the_canonical_key() -> None:
+    registry = TenantRegistry()
+    assert registry.register(" ACME ") == "acme"
+    assert len(registry) == 1
+    assert registry.spelling_of("acme") == " ACME "
+
+
+def test_membership_normalises_like_a_reference() -> None:
+    registry = TenantRegistry()
+    registry.register("acme")
+    assert "Acme" in registry and "  ACME  " in registry, (
+        "a spelling that resolves to a minted tenant answered False to membership; "
+        "lookups must merge exactly the spellings the fold merges"
+    )
+    assert "acme-corp" not in registry
+
+
+def test_a_key_is_minted_exactly_once_even_with_the_identical_spelling() -> None:
+    registry = TenantRegistry()
+    registry.register("acme")
+    with pytest.raises(TenantCollision, match="already registered"):
+        registry.register("acme")
+
+
+def test_a_case_twin_registration_names_both_spellings_and_the_key() -> None:
+    registry = TenantRegistry()
+    registry.register("Kronos")
+    with pytest.raises(TenantCollision) as caught:
+        registry.register("KRONOS")
+    message = str(caught.value)
+    assert "'Kronos'" in message and "'KRONOS'" in message and "'kronos'" in message
+
+
+def test_pairs_the_fold_keeps_apart_mint_two_tenants() -> None:
+    """The registry only refuses what the fold merges, never what it separates.
+
+    ``ß`` and ``Ä`` are outside ``A-Z``, so the ASCII fold leaves them alone
+    and each spelling mints its own key. Fail closed, two tenants, documented
+    in ``normalise_id`` as the cost of not merging what is not a case pair.
+    """
+    registry = TenantRegistry()
+    assert registry.register("Straße-Werke") == "straße-werke"
+    assert registry.register("strasse-werke") == "strasse-werke"
+    assert registry.register("Ärger") == "Ärger"
+    assert registry.register("ärger") == "ärger"
+    assert len(registry) == 4
+
+
+def test_an_empty_or_invisible_identifier_cannot_be_minted() -> None:
+    registry = TenantRegistry()
+    with pytest.raises(ValueError, match="must not be empty"):
+        registry.register("   ")
+    with pytest.raises(ValueError):
+        registry.register("acme\u200bcorp")
+    assert len(registry) == 0, "a refused registration must leave nothing minted"

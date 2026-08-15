@@ -168,6 +168,99 @@ def _canonical_segment(value: str | None, *, level: str) -> str | None:
     return require_visible_id(folded, level=level)
 
 
+class TenantCollision(ValueError):
+    """Raised when a registration lands on a canonical key that is already minted.
+
+    The message always carries the spelling that arrived, the spelling that got
+    there first and the shared key, written with ``repr`` so a pair that renders
+    identically on screen still reads as two different strings. A collision is
+    only ever resolved by a human, and the human can only resolve what they can
+    see.
+    """
+
+
+class TenantRegistry:
+    """Write-time uniqueness for tenant identifiers: the unique index, made explicit.
+
+    :func:`normalise_id` is deliberately many-to-one across exactly two things,
+    ASCII case and edge whitespace, so that a sloppy reference to an existing
+    tenant resolves to that tenant. Right for a reference, wrong for a
+    registration. When two separately minted identifiers land on one canonical
+    key, every layer downstream agrees they are the same tenant, and the
+    disagreement about who owns the key surfaces at query time, where it is a
+    cross-tenant read.
+
+    This class moves that discovery to write time, where it is a validation
+    message. :meth:`register` mints a canonical key exactly once; any second
+    registration that lands on a minted key is refused with
+    :class:`TenantCollision`, whether it is the same spelling twice (a retry or
+    a duplicate) or a different spelling folding onto it (the dangerous case).
+    A reader's review of the public write-up asked for exactly this and said it
+    plainly: the second ``strasse-werke`` should fail loudly at write time
+    instead of silently sharing an entitlement.
+
+    The registry does not replace the fold, and it does not catch the pairs the
+    fold deliberately keeps apart: ``"Straße-Werke"`` and ``"strasse-werke"``
+    mint two distinct keys here, two tenants, isolated in both directions. What
+    it catches is every pair the fold merges. If that merge was not an
+    intentional reference to the existing tenant, registration is the only
+    moment a human is present to notice, and this is the refusal that makes
+    them look.
+    """
+
+    def __init__(self) -> None:
+        self._spellings: dict[str, str] = {}
+
+    def __len__(self) -> int:
+        return len(self._spellings)
+
+    def __contains__(self, spelling: str) -> bool:
+        """Whether ``spelling`` resolves to a minted key.
+
+        Normalises first, so any spelling that would reference the tenant
+        answers True. Lookups never mint and never refuse; only
+        :meth:`register` does either.
+        """
+        return normalise_id(spelling) in self._spellings
+
+    def spelling_of(self, key: str) -> str:
+        """The exact spelling that minted ``key``; ``KeyError`` if nothing has."""
+        return self._spellings[key]
+
+    def register(self, spelling: str) -> str:
+        """Mint the canonical key for ``spelling``, exactly once, and return it.
+
+        The key is the :func:`normalise_id` form, checked by
+        :func:`require_visible_id` the same way a :class:`Scope` customer is,
+        so nothing can be minted here that a scope would refuse to name.
+        """
+        folded = normalise_id(spelling)
+        if not folded:
+            raise ValueError(
+                "a tenant identifier must not be empty after trimming; "
+                "there is no anonymous tenant to mint"
+            )
+        key = require_visible_id(folded, level="customer")
+        first = self._spellings.get(key)
+        if first is None:
+            self._spellings[key] = spelling
+            return key
+        if first == spelling:
+            raise TenantCollision(
+                f"tenant {spelling!r} is already registered; a registry mints a key "
+                "exactly once, and a second identical registration is either a retry "
+                "that deserves a clear answer or two callers who both believe they "
+                "created this tenant"
+            )
+        raise TenantCollision(
+            f"tenant spelling {spelling!r} normalises to {key!r}, which is already "
+            f"registered as {first!r}. Two distinct spellings are claiming one "
+            "entitlement key. A reference to the existing tenant needs no "
+            "registration, and a genuinely new tenant needs an identifier that does "
+            "not fold onto a minted one"
+        )
+
+
 class DocumentStatus(StrEnum):
     """Publication state of a document.
 
